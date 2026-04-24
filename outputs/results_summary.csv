@@ -1,0 +1,19 @@
+Dataset,Loss,Classifier,MLC Loss,Gain SEP,Gain PAR,Abs Size SEP,Abs Size PAR
+emotions,hamming,br_lr,1.2344,0.4983,0.3598,0.217,0.166
+emotions,hamming,ecc_lr,1.2226,0.4781,0.3476,0.210,0.160
+emotions,fmeasure,br_lr,0.2620,0.0519,0.0393,0.102,0.073
+emotions,fmeasure,ecc_lr,0.2610,0.0523,0.0401,0.097,0.068
+emotions,jaccard,br_lr,0.3691,0.1008,0.0751,0.175,0.129
+emotions,jaccard,ecc_lr,0.3652,0.0964,0.0707,0.167,0.121
+scene,hamming,br_lr,1.0200,0.4525,0.3345,0.237,0.187
+scene,hamming,ecc_lr,1.0063,0.4441,0.3300,0.230,0.183
+scene,fmeasure,br_lr,0.2213,0.0499,0.0378,0.114,0.084
+scene,fmeasure,ecc_lr,0.2205,0.0538,0.0413,0.110,0.079
+scene,jaccard,br_lr,0.3188,0.1059,0.0789,0.194,0.149
+scene,jaccard,ecc_lr,0.3158,0.1084,0.0825,0.187,0.142
+yeast,hamming,br_lr,3.3662,1.8694,1.4308,0.367,0.308
+yeast,hamming,ecc_lr,3.3725,1.8441,1.4100,0.358,0.299
+yeast,fmeasure,br_lr,0.4478,0.0994,0.0902,0.154,0.129
+yeast,fmeasure,ecc_lr,0.4508,0.1023,0.0922,0.155,0.129
+yeast,jaccard,br_lr,0.5870,0.1610,0.1398,0.270,0.237
+yeast,jaccard,ecc_lr,0.5904,0.1628,0.1405,0.271,0.237
