@@ -1,12 +1,12 @@
 """
 mlc_core.py
 ===========
-Implementation của bài báo:
+Implementation of:
     "Multilabel Classification with Partial Abstention:
      Bayes-Optimal Prediction under Label Independence"
     Nguyen & Hüllermeier, JAIR 2021
 
-Cấu trúc file:
+File structure:
     1. Penalty functions g(a)           — Section 3.2.2
     2. Bayes-Optimal Predictors (BOP)   — Sections 4, 5, 6, 7
     3. Generalized Loss Functions       — Section 3.2
@@ -18,8 +18,8 @@ from typing import Callable, List, Tuple, Optional
 
 
 # ============================================================
-# PHẦN 1: PENALTY FUNCTIONS g(a)
-# Section 3.2.2, Equations (30) và (31)
+# PART 1: PENALTY FUNCTIONS g(a)
+# Section 3.2.2, Equations (30) and (31)
 # ============================================================
 
 def penalty_linear(a: int, K: int, c: float) -> float:
@@ -27,13 +27,13 @@ def penalty_linear(a: int, K: int, c: float) -> float:
     SEP — Linear penalty (Equation 30):
         g1(a) = a * c
 
-    Mỗi nhãn abstain bị phạt đều nhau, không phân biệt
-    đây là nhãn abstain thứ nhất hay thứ mười.
+    Every abstained label incurs the same cost c, regardless of
+    whether it is the first or the tenth abstention.
 
     Args:
-        a: Số nhãn abstain |A(ŷ)|
-        K: Tổng số nhãn (không dùng ở đây, giữ để API nhất quán)
-        c: Hệ số phạt mỗi nhãn
+        a: number of abstained labels |A(ŷ)|
+        K: total number of labels (unused here, kept for API consistency)
+        c: per-label abstention cost
     """
     return a * c
 
@@ -43,26 +43,25 @@ def penalty_concave(a: int, K: int, c: float) -> float:
     PAR — Concave penalty (Equation 31):
         g2(a) = (a * K * c) / (K + a)
 
-    Nhãn abstain đầu tiên bị phạt nặng hơn nhãn thứ N.
-    Đây là hàm lõm (concave) — marginal cost giảm dần.
-    Khuyến khích mô hình abstain nhiều hơn so với SEP
-    khi c bằng nhau.
+    The first abstention is penalised more than subsequent ones.
+    This is a concave function — marginal cost is decreasing.
+    Encourages more abstentions than SEP at the same c.
 
-    Note từ bài báo (Section 9.1.4): với cùng cost c,
-    PAR thực ra tương đương với SEP nhưng với c' = 2c.
+    Note from paper (Section 9.1.4): at the same cost c,
+    PAR is equivalent to SEP with c' = 2c.
     """
     return (a * K * c) / (K + a) if (K + a) > 0 else 0.0
 
 
 def make_penalty(penalty_type: str, K: int, c: float) -> Callable[[int], float]:
     """
-    Factory tạo penalty function với K và c đã bind sẵn.
-    Trả về hàm g(a) nhận đúng 1 argument.
+    Factory that returns a penalty function with K and c already bound.
+    Returns g(a) accepting exactly one argument.
 
     Args:
-        penalty_type: 'linear' (SEP) hoặc 'concave' (PAR)
-        K: Tổng số nhãn
-        c: Hệ số phạt
+        penalty_type: 'linear' (SEP) or 'concave' (PAR)
+        K: total number of labels
+        c: abstention cost coefficient
     """
     if penalty_type == 'linear':
         return lambda a: penalty_linear(a, K, c)
@@ -73,7 +72,7 @@ def make_penalty(penalty_type: str, K: int, c: float) -> Callable[[int], float]:
 
 
 # ============================================================
-# PHẦN 2: BAYES-OPTIMAL PREDICTORS
+# PART 2: BAYES-OPTIMAL PREDICTORS
 # ============================================================
 
 # ----------------------------------------------------------
@@ -83,46 +82,45 @@ def make_penalty(penalty_type: str, K: int, c: float) -> Callable[[int], float]:
 
 def bop_hamming(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
     """
-    BOP cho Generalized Hamming Loss (Equation 38).
+    BOP for the Generalized Hamming Loss (Equation 38).
 
-    Hamming loss là decomposable loss (Equation 16):
+    Hamming loss is a decomposable loss (Equation 16):
         ℓ_H(y, ŷ) = Σ_k [y_k ≠ ŷ_k]
 
-    Với abstention, mỗi nhãn được xét độc lập:
-        - Nếu p_k > 0.5: dự đoán 1 (expected loss = 1 - p_k)
-        - Nếu p_k < 0.5: dự đoán 0 (expected loss = p_k)
-        - Loss khi abstain = c (hệ số penalty)
+    With abstention each label is considered independently:
+        - if p_k > 0.5: predict 1 (expected loss = 1 - p_k)
+        - if p_k < 0.5: predict 0 (expected loss = p_k)
+        - abstain when the abstention cost beats the prediction cost
 
-    Corollary 1: BOP có dạng uncertainty-aligned —
-    abstain những nhãn có min(p_k, 1-p_k) lớn nhất
-    (tức gần 0.5 nhất), predict những nhãn xa 0.5.
+    Corollary 1: BOP is uncertainty-aligned —
+    abstain on labels closest to 0.5 (highest min(p_k, 1-p_k)),
+    predict on labels farthest from 0.5.
 
-    Thuật toán (Corollary 1):
-        1. Tính s_k = min(p_k, 1-p_k)  — minimum expected loss per label
-        2. Sắp xếp nhãn theo s_k tăng dần
-        3. Với mỗi d = 0..K: tính expected total loss khi predict d nhãn đầu
-        4. Chọn d* tối thiểu hóa expected loss + g(K-d)
+    Algorithm (Corollary 1):
+        1. Compute s_k = min(p_k, 1-p_k)  — minimum expected loss per label
+        2. Sort labels by s_k ascending
+        3. For each d = 0..K: compute expected total loss when predicting d labels
+        4. Choose d* minimising expected loss + g(K-d)
 
-    Độ phức tạp: O(K log K) do sorting
+    Complexity: O(K log K) due to sorting
     """
     K = len(probs)
 
-    # Tính score s_k = min expected loss nếu predict nhãn k
-    # (Proposition 1): s_k = min{p_k * ℓ(0,1), (1-p_k) * ℓ(1,0)}
-    # Với Hamming loss: ℓ(0,1) = ℓ(1,0) = 1, nên:
+    # s_k = minimum expected loss if we predict label k (Proposition 1):
+    # s_k = min{p_k * ℓ(0,1), (1-p_k) * ℓ(1,0)}
+    # For Hamming loss ℓ(0,1) = ℓ(1,0) = 1, so:
     s = np.minimum(probs, 1 - probs)  # shape (K,)
 
-    # Sắp xếp tăng dần theo s_k → nhãn tự tin nhất trước
+    # Sort ascending by s_k — most confident labels first
     sorted_idx = np.argsort(s)
 
-    # Tính dự đoán tốt nhất khi quyết định predict d nhãn
-    # (luôn chọn d nhãn có s_k nhỏ nhất = tự tin nhất)
-    best_pred = (probs >= 0.5).astype(float)  # dự đoán point estimate
+    # Point-estimate prediction for each label
+    best_pred = (probs >= 0.5).astype(float)
 
     best_d = 0
-    best_expected = g(K)  # cost khi abstain hoàn toàn (d=0)
+    best_expected = g(K)  # cost of full abstention (d=0)
 
-    # Tính cumulative expected Hamming loss khi predict d nhãn đầu
+    # Cumulative expected Hamming loss when predicting d labels
     cumulative_loss = 0.0
     for d in range(1, K + 1):
         k = sorted_idx[d - 1]
@@ -132,8 +130,7 @@ def bop_hamming(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
             best_expected = total
             best_d = d
 
-    # Xây dựng prediction vector
-    # D(ŷ) = {d nhãn có s_k nhỏ nhất}
+    # Build prediction vector: D(ŷ) = {d labels with smallest s_k}
     pred = np.full(K, np.nan)  # NaN = ⊥ (abstain)
     decided_indices = sorted_idx[:best_d]
     pred[decided_indices] = best_pred[decided_indices]
@@ -142,50 +139,176 @@ def bop_hamming(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
 
 
 # ----------------------------------------------------------
-# 2.2 Subset 0/1 Loss BOP
+# 2.2 Rank Loss BOP
+# Section 5, Proposition 2, Algorithm 1
+# ----------------------------------------------------------
+
+def bop_rank(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
+    """
+    BOP for the Generalized Rank Loss (Algorithm 1, Proposition 2).
+
+    Rank loss counts misordered label pairs:
+        ℓ_R(y, π) = Σ_{i<j} [y_{π(i)}=0 ∧ y_{π(j)}=1]
+
+    Under CLI (Lemma 1, Equation 46), the expected rank loss of the
+    optimal ranking on decision set D_d = ⟪l,r⟫ is:
+        E[ℓ_R(y, π_{D_d})] = Σ_{i<j in D_d} (1-p_{π(i)}) * p_{π(j)}
+
+    BOP is semi-uncertainty-aligned (Lemma 1):
+        D_d = ⟪l,r⟫ = {1,...,l} ∪ {r,...,K}  (after sorting p descending)
+
+    By Lemma 2: if ⟪l,r⟫ is an optimal d-selection, then at least one of
+    ⟪l+1,r⟫ or ⟪l,r-1⟫ is an optimal (d+1)-selection → greedy construction.
+
+    Algorithm 1 (O(K log K)):
+        1. Sort p descending
+        2. D₀=∅, D₂=⟪1,K⟫, l=1, r=K
+        3. Greedily extend from d=3..K: pick the direction with lower E[ℓ_R]
+        4. d* = argmin_{d∈{0,2,...,K}} E_d
+        5. Output ranking π_{D_{d*}}
+
+    Returns:
+        pred: rank array (0.0 = highest rank, NaN = abstain).
+              Label π(1) (largest p in D) gets rank 0, π(2) gets rank 1, …
+    """
+    K = len(probs)
+
+    # Step 1: sort labels descending by p_k
+    sorted_idx = np.argsort(-probs)   # sorted_idx[i] = original label at position i
+    p = probs[sorted_idx]             # p[0] >= p[1] >= ... >= p[K-1]
+
+    if K < 2:
+        # K=1: rank loss is always 0; predict if it improves over full abstention
+        pred = np.full(K, np.nan)
+        if K == 1 and g(1) > g(0):
+            pred[0] = 0.0
+        return pred
+
+    # best_total[d] = E_rank(D_d) + g(K-d)  for d = 0..K
+    best_total = np.full(K + 1, np.inf)
+    # track (l, r) 0-indexed at each d (left side: 0..l, right side: r..K-1)
+    decisions = [None] * (K + 1)
+
+    # d=0: full abstention
+    best_total[0] = g(K)
+    decisions[0] = (-1, K)  # empty set
+
+    # d=2: D₂=⟪1,K⟫ → 0-indexed: l=0, r=K-1 (leftmost and rightmost labels)
+    l, r = 0, K - 1
+    # E_rank(⟪l,r⟫) with l=0, r=K-1: only one pair (0, K-1)
+    E_rank = (1.0 - p[l]) * p[r]
+    best_total[2] = E_rank + g(K - 2)
+    decisions[2] = (l, r)
+
+    # sum_right     = Σ p[j] for j in right side (r..K-1)
+    # sum_left_neg  = Σ (1-p[i]) for i in left side (0..l)
+    sum_right = float(np.sum(p[r:]))
+    sum_left_neg = float(np.sum(1.0 - p[:l + 1]))
+
+    for d in range(3, K + 1):
+        # Try extending left: add position l+1 to left side
+        if l + 1 < r:
+            x = l + 1
+            # New pairs: (x, j) for j in right side r..K-1, x ranked above j
+            delta_left = (1.0 - p[x]) * sum_right
+            E_left = E_rank + delta_left
+        else:
+            E_left = np.inf
+
+        # Try extending right: add position r-1 to right side
+        if l < r - 1:
+            x = r - 1
+            # New pairs: (i, x) for i in left side 0..l, i ranked above x
+            delta_right = sum_left_neg * p[x]
+            E_right = E_rank + delta_right
+        else:
+            E_right = np.inf
+
+        if E_left <= E_right:
+            l = l + 1
+            E_rank = E_left
+            sum_left_neg += (1.0 - p[l])
+            # sum_right unchanged (r did not change)
+        else:
+            r = r - 1
+            E_rank = E_right
+            sum_right += p[r]
+            # sum_left_neg unchanged (l did not change)
+
+        best_total[d] = E_rank + g(K - d)
+        decisions[d] = (l, r)
+
+    # d* = argmin_{d ∈ {0,2,...,K}} best_total[d]
+    # (d=1 is skipped: by Lemma 1 the BOP always has the form ⟪l,r⟫)
+    d_star = 0
+    for d in range(0, K + 1):
+        if d == 1:
+            continue
+        if best_total[d] < best_total[d_star]:
+            d_star = d
+
+    # Build prediction
+    pred = np.full(K, np.nan)
+    if d_star == 0:
+        return pred  # full abstention
+
+    l_star, r_star = decisions[d_star]
+    rank = 0.0
+    for i in range(0, l_star + 1):
+        pred[sorted_idx[i]] = rank
+        rank += 1.0
+    for i in range(r_star, K):
+        pred[sorted_idx[i]] = rank
+        rank += 1.0
+
+    return pred
+
+
+# ----------------------------------------------------------
+# 2.3 Subset 0/1 Loss BOP
 # Section 6, Proposition 3
 # ----------------------------------------------------------
 
 def bop_subset01(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
     """
-    BOP cho Generalized Subset 0/1 Loss (Equation 48).
+    BOP for the Generalized Subset 0/1 Loss (Equation 48).
 
-    Subset 0/1 là non-decomposable loss:
-        ℓ_S(y, ŷ) = [y ≠ ŷ]  (sai 1 nhãn = sai toàn bộ)
+    Subset 0/1 is a non-decomposable loss:
+        ℓ_S(y, ŷ) = [y ≠ ŷ]  (one wrong label = entirely wrong)
 
-    Cần giả định CLI (Conditional Label Independence, Equation 15):
+    Requires CLI (Conditional Label Independence, Equation 15):
         p(y|x) = Π_k p_k^{y_k} * (1-p_k)^{1-y_k}
 
-    Dưới CLI, BOP cho subset 0/1 với abstention:
+    Under CLI, the optimal per-label prediction is:
         ŷ_k^d = argmax_{ŷ_k ∈ {0,1}} p_k^{ŷ_k} * (1-p_k)^{1-ŷ_k}
-             = round(p_k)  — predict nhãn có xác suất cao hơn
+               = round(p_k)  — predict the more probable value
 
-    Key insight (Proposition 3): BOP là uncertainty-aligned —
-    abstain những nhãn gần 0.5 nhất (uncertainty u_k = 2*min(p_k, 1-p_k) cao nhất).
-    Đây giống hệt Hamming, chỉ khác cách tính expected loss.
+    Key insight (Proposition 3): BOP is uncertainty-aligned —
+    abstain on labels closest to 0.5 (highest u_k = 2*min(p_k, 1-p_k)).
+    Same structure as Hamming BOP, different expected loss formula.
 
-    Expected loss khi predict d nhãn có uncertainty nhỏ nhất:
+    Expected loss when predicting the d most certain labels:
         E[ℓ_S] = 1 - Π_{k in D} max(p_k, 1-p_k)
 
-    Độ phức tạp: O(K log K)
+    Complexity: O(K log K)
     """
     K = len(probs)
 
     # u_k = 2*min(p_k, 1-p_k) — degree of uncertainty (Equation 24)
     uncertainty = 2 * np.minimum(probs, 1 - probs)
 
-    # Sắp xếp tăng dần theo uncertainty → nhãn tự tin nhất trước
+    # Sort ascending by uncertainty — most confident labels first
     sorted_idx = np.argsort(uncertainty)
 
-    # max(p_k, 1-p_k) = xác suất của dự đoán tốt nhất cho nhãn k
+    # max(p_k, 1-p_k) = probability of the best point prediction for label k
     max_probs = np.maximum(probs, 1 - probs)
 
     best_pred = (probs >= 0.5).astype(float)
     best_d = 0
-    best_expected = g(K)  # abstain hoàn toàn
+    best_expected = g(K)  # full abstention
 
-    # Tích lũy product của max_probs
-    # E[ℓ_S | predict d nhãn] = 1 - Π_{k in D_d} max(p_k, 1-p_k)
+    # Accumulate log-product of max_probs:
+    # E[ℓ_S | predict d labels] = 1 - Π_{k in D_d} max(p_k, 1-p_k)
     log_prod = 0.0
     for d in range(1, K + 1):
         k = sorted_idx[d - 1]
@@ -202,36 +325,35 @@ def bop_subset01(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
 
 
 # ----------------------------------------------------------
-# 2.3 F-measure BOP
+# 2.4 F-measure BOP
 # Section 7.3, Proposition 6, Algorithm 2
 # ----------------------------------------------------------
 
 def _compute_Q_matrix(probs_sorted: np.ndarray) -> np.ndarray:
     """
-    Tính ma trận Q(l, l1) — Lemma 4, Equation 57.
+    Compute matrix Q(l, l1) — Lemma 4, Equation 57.
 
     Q(l, l1) = P(Σ_{k=1}^{l} y_{π(k)} = l1 | x)
 
-    Đây là xác suất có đúng l1 nhãn dương trong l nhãn đầu tiên
-    (sau khi đã sắp xếp theo p_k giảm dần).
+    Probability of exactly l1 positives among the first l labels
+    (after sorting by p_k descending).
 
-    Tính bằng dynamic programming:
+    Dynamic programming recurrence:
         Q(l, l1) = p_{π(l)} * Q(l-1, l1-1) + (1-p_{π(l)}) * Q(l-1, l1)
 
-    Độ phức tạp: O(K²)
-    Shape output: (K+1, K+2)  — index l từ 0..K, l1 từ -1..K+1 (offset +1)
+    Complexity: O(K²)
+    Output shape: (K+1, K+2)  — l in 0..K, l1 offset by +1 to avoid negative index
     """
     K = len(probs_sorted)
-    # Q[l, l1+1] để tránh index âm (l1 có thể = -1 trong init)
+    # Q[l, l1+1] to avoid negative indices
     Q = np.zeros((K + 1, K + 2))
 
-    # Base case: Q(0, 0) = 1 (không có nhãn nào, không có positive nào)
+    # Base case: Q(0, 0) = 1 (no labels, no positives)
     Q[0, 0 + 1] = 1.0
 
     for l in range(1, K + 1):
         p = probs_sorted[l - 1]
         for l1 in range(0, l + 1):
-            # Q(l, l1) = p_l * Q(l-1, l1-1) + (1-p_l) * Q(l-1, l1)
             q_prev_pos = Q[l - 1, l1 - 1 + 1] if l1 > 0 else 0.0
             q_prev_neg = Q[l - 1, l1 + 1]
             Q[l, l1 + 1] = p * q_prev_pos + (1 - p) * q_prev_neg
@@ -241,20 +363,20 @@ def _compute_Q_matrix(probs_sorted: np.ndarray) -> np.ndarray:
 
 def _compute_P_matrix(probs_sorted: np.ndarray) -> np.ndarray:
     """
-    Tính ma trận P(r', r'1) — Lemma 4, Equation 58.
+    Compute matrix P(r', r'1) — Lemma 4, Equation 58.
 
     P(r', r'1) = P(Σ_{k=r}^{K} y_{π(k)} = r'1 | x)
-    với r' = K+1-r (số nhãn ở "đuôi" sau vị trí r)
+    where r' = K+1-r (number of labels in the tail starting at position r)
 
-    Tương tự Q nhưng tính từ cuối danh sách (nhãn có p nhỏ nhất).
-    Dùng cho phần bên phải của decision set ⟪l,r⟫.
+    Same DP as Q but computed from the end of the sorted list (lowest p first).
+    Used for the right part of the decision set ⟪l,r⟫.
     """
     K = len(probs_sorted)
     P = np.zeros((K + 1, K + 2))
     P[0, 0 + 1] = 1.0
 
     for rp in range(1, K + 1):
-        # Nhãn từ cuối lên: index K-rp trong mảng đã sort giảm dần
+        # Label from the tail: index K-rp in the descending-sorted array
         p = probs_sorted[K - rp]
         for rp1 in range(0, rp + 1):
             q_prev_pos = P[rp - 1, rp1 - 1 + 1] if rp1 > 0 else 0.0
@@ -267,130 +389,126 @@ def _compute_P_matrix(probs_sorted: np.ndarray) -> np.ndarray:
 def bop_fmeasure(probs: np.ndarray, g: Callable[[int], float],
                  beta: float = 1.0) -> np.ndarray:
     """
-    BOP cho Generalized F_beta measure (Algorithm 2, Proposition 6).
+    BOP for the Generalized F_beta measure (Algorithm 2, Proposition 6).
 
     F_beta = (1+β²) * tp / [(1+β²)*tp + β²*fn + fp]
 
     Key results (Proposition 5, Lemma 3):
-    - F_beta là semi-uncertainty-aligned
-    - BOP có dạng decision set ⟪l,r⟫ — predict l nhãn đầu (p cao)
-      và r' nhãn cuối (p thấp), abstain phần giữa
-    - Tìm bằng dynamic programming, độ phức tạp O(K³)
+    - F_beta is semi-uncertainty-aligned
+    - BOP has decision set ⟪l,r⟫: predict top-l labels (high p) and
+      bottom-r' labels (low p), abstain in the middle
+    - Found via dynamic programming, complexity O(K³)
 
     Decision set ⟪l,r⟫ = {1,...,l} ∪ {r,...,K}
-    (indices sau khi sort theo p giảm dần)
-    Nhãn 1..l predict 1, nhãn r..K predict 0, phần giữa abstain.
+    (indices after sorting p descending)
+    Labels 1..l → predict 1, labels r..K → predict 0, middle → abstain.
+
+    S_β recursion (Appendix, Proof of Prop 6):
+        S_β(l, l1, r') = p_π(r) * S(l, l1+1, r'-1) + (1-p_π(r)) * S(l, l1, r'-1)
+        S_β(l, l1, 0)  = 1 / (l*β⁻² + l1)   [boundary]
+
+    Algorithm 2 lines 12-14 are the in-place form of this recursion:
+        for i = 0 to K-l-r':  S(l,i) ← p_r*S(l,i+1) + (1-p_r)*S(l,i)
 
     Args:
         probs: marginal probabilities p_k, shape (K,)
-        g: penalty function g(a) với a = số nhãn abstain
-        beta: tham số F_beta (default 1.0 = F1)
+        g: penalty function g(a) where a = number of abstentions
+        beta: F_beta parameter (default 1.0 = F1)
     """
     K = len(probs)
     beta_sq = beta ** 2
-    beta_prime = 1.0 + 1.0 / beta_sq  # = (1+β²)/β² ... wait
-    # Công thức trong paper: β' = 1 + β^{-2} (Appendix, Proof of Prop 6)
-    # F_beta = β' * Σ l1*Q(l,l1)*S(l,l1) với S là hàm của P
+    beta_inv2 = 1.0 / beta_sq   # β⁻²
+    beta_prime = 1.0 + beta_inv2  # β' = 1 + β⁻²  (Appendix, Proof of Prop 6)
 
-    # Sắp xếp nhãn giảm dần theo p_k (Remark 3, Proposition 6)
+    # Sort labels descending by p_k (Remark 3, Proposition 6)
     sorted_idx = np.argsort(-probs)
     probs_sorted = probs[sorted_idx]
 
-    # Tính Q và P matrices (Lemma 4)
+    # Compute Q matrix (Lemma 4) — P is not needed since S is updated in-place
     Q = _compute_Q_matrix(probs_sorted)
-    P = _compute_P_matrix(probs_sorted)
 
     best_val = -np.inf
     best_l, best_r = 0, K + 1
 
-    # Xét trường hợp d=0: abstain hoàn toàn
-    # F(0, K+1) = 0 - g(K) (không predict gì = F=0)
+    # d=0: full abstention, F=0
     val_empty = 0.0 - g(K)
     if val_empty > best_val:
         best_val = val_empty
         best_l, best_r = 0, K + 1
 
-    # Duyệt tất cả cặp (l, r) với 0 <= l < r <= K+1
-    # (Algorithm 2 — O(K³) nhờ cập nhật S incremental)
+    # Iterate over all pairs (l, r) with 1 <= l, r descending from K+1 to l+1
+    # Algorithm 2 — O(K³)
     for l in range(1, K + 1):
-        # S(l, l1) ban đầu = 1 / (l*β^{-2} + l1) cho r=K+1 (không có phần đuôi)
-        # Khi r giảm dần từ K+1 về l+1, update S theo công thức recursion
-
-        # Initialize S cho r = K+1 (không có nhãn nào ở đuôi → P(0,0)=1)
+        # Boundary: S(l, l1, r'=0) = 1 / (l*β⁻² + l1)
+        # S[i] represents S(l, i, r') — r' increases as r decreases in the inner loop
         S = np.zeros(K + 2)
-        for l1 in range(0, l + 1):
-            denom = l * (1.0 / beta_sq) + l1
+        for i in range(0, K + 1):
+            denom = l * beta_inv2 + i
             if denom > 1e-10:
-                S[l1] = 1.0 / denom  # S(l, l1, r'=0) = 1/(l/β² + l1)
+                S[i] = 1.0 / denom
 
-        # F_beta(l, K+1): predict l nhãn, không có đuôi
-        # = β' * Σ_{l1} l1 * Q(l,l1) * S(l,l1)
+        # F_β(l, K+1): r'=0, no tail labels, g(K-l) abstentions
         fb = beta_prime * sum(
-            l1 * Q[l, l1 + 1] * S[l1]
-            for l1 in range(0, l + 1)
+            l1 * Q[l, l1 + 1] * S[l1] for l1 in range(0, l + 1)
         ) - g(K - l)
         if fb > best_val:
             best_val = fb
             best_l, best_r = l, K + 1
 
-        # Update S khi thêm nhãn vào đuôi (r giảm từ K về l+1)
+        # r decreases from K to l+1: each step adds label π(r) to the tail (r' += 1)
+        # In-place S update per Algorithm 2 lines 12-14:
+        #   for i = 0 to K-l-r': S(l,i) ← p_r*S(l,i+1) + (1-p_r)*S(l,i)
+        # Iterate i ascending to avoid overwriting S[i+1] before it is read
         for r in range(K, l, -1):
-            rp = K + 1 - r  # r' = số nhãn ở đuôi
+            rp = K + 1 - r      # r' = number of labels added to the tail so far
             pr = probs_sorted[r - 1]
-
-            # Recursion từ paper (Proof of Proposition 6):
-            # S(l, l1, r') = pr * S(l, l1, r'-1)[shifted] + (1-pr) * S(l, l1, r'-1)
-            # Simplified implementation:
-            new_S = np.zeros(K + 2)
-            for l1 in range(0, l + 1):
-                total = 0.0
-                for rp1 in range(0, rp + 1):
-                    denom = l * (1.0 / beta_sq) + l1 + rp1
-                    if denom > 1e-10:
-                        total += P[rp, rp1 + 1] / denom
-                if total > 0:
-                    new_S[l1] = total
-            S = new_S
+            limit = K - l - rp  # K - l - r'  (Algorithm 2 line 12)
+            for i in range(0, limit + 1):
+                S[i] = pr * S[i + 1] + (1.0 - pr) * S[i]
 
             fb = beta_prime * sum(
-                l1 * Q[l, l1 + 1] * S[l1]
-                for l1 in range(0, l + 1)
+                l1 * Q[l, l1 + 1] * S[l1] for l1 in range(0, l + 1)
             ) - g(r - l - 1)
             if fb > best_val:
                 best_val = fb
                 best_l, best_r = l, r
 
-    # Xây dựng prediction từ (best_l, best_r)
-    # predict 1 cho top-l nhãn, 0 cho bottom nhãn từ best_r..K, ⊥ cho giữa
+    # Build prediction from (best_l, best_r):
+    # top-l labels → predict 1, labels best_r..K → predict 0, middle → abstain
     pred = np.full(K, np.nan)
     for i in range(best_l):
-        orig_idx = sorted_idx[i]
-        pred[orig_idx] = 1.0
+        pred[sorted_idx[i]] = 1.0
     for i in range(best_r - 1, K):
-        orig_idx = sorted_idx[i]
-        pred[orig_idx] = 0.0
+        pred[sorted_idx[i]] = 0.0
 
     return pred
 
 
 # ----------------------------------------------------------
-# 2.4 Jaccard Measure BOP
+# 2.5 Jaccard Measure BOP
 # Section 7.3, Proposition 7, Algorithm 3
 # ----------------------------------------------------------
 
 def bop_jaccard(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
     """
-    BOP cho Generalized Jaccard measure (Algorithm 3, Proposition 7).
+    BOP for the Generalized Jaccard measure (Algorithm 3, Proposition 7).
 
     Jaccard = tp / (tp + fn + fp)
 
-    Tương tự F-measure nhưng đơn giản hơn vì không có β.
-    Semi-uncertainty-aligned, decision set dạng ⟪l,r⟫.
-    Độ phức tạp: O(K³)
+    Similar to F-measure but simpler as there is no β parameter.
+    Semi-uncertainty-aligned, decision set of the form ⟪l,r⟫.
+    Complexity: O(K³)
 
-    Công thức key (Proof of Proposition 7):
-        S_Jac(l, r') = p_r * S_Jac(l+1, r'-1) + (1-p_r) * S_Jac(l, r'-1)
-    với boundary: S_Jac(l, 0) = 1/l
+    S_Jac depends only on (l, r'), not on l1 individually:
+        F_Jac(l, r) = S_Jac(l, r') * Σ_{l1} l1*Q(l,l1) - g(r-l-1)
+
+    Recursion (Appendix, Proof of Prop 7):
+        S_Jac(l, r') = p_π(r) * S_Jac(l+1, r'-1) + (1-p_π(r)) * S_Jac(l, r'-1)
+        S_Jac(l, 0)  = 1/l   [boundary]
+
+    Algorithm 3 lines 12-14 are the in-place form:
+        for i = l+r' downto l+1:  S(i) ← p_r*S(i) + (1-p_r)*S(i-1)
+    Iterate i descending to avoid overwriting S[i-1] before it is read.
     """
     K = len(probs)
     sorted_idx = np.argsort(-probs)
@@ -401,38 +519,40 @@ def bop_jaccard(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
     best_val = -np.inf
     best_l, best_r = 0, K + 1
 
-    # d=0: abstain hoàn toàn
-    if -g(K) > best_val:
-        best_val = -g(K)
+    # d=0: full abstention, F=0
+    val_empty = 0.0 - g(K)
+    if val_empty > best_val:
+        best_val = val_empty
         best_l, best_r = 0, K + 1
 
     for l in range(1, K + 1):
-        # Initialize S_Jac cho r'=0 (không có đuôi)
+        # Precompute Σ_{l1} l1*Q(l,l1) once for all r in this outer loop
+        sum_l1Q = sum(l1 * Q[l, l1 + 1] for l1 in range(0, l + 1))
+
+        # Boundary: S_Jac(i, r'=0) = 1/i for i = l..K
+        # S[i] represents S_Jac(i, r') — r' increases as r decreases
         S = np.zeros(K + 2)
         for i in range(l, K + 1):
-            S[i] = 1.0 / i if i > 0 else 0.0
+            S[i] = 1.0 / i  # S_Jac(i, 0) = 1/i
 
-        # F_Jac(l, K+1)
-        fj = S[l] * sum(l1 * Q[l, l1 + 1] for l1 in range(0, l + 1)) - g(K - l)
+        # F_Jac(l, K+1): r'=0, S_Jac = S[l] = 1/l
+        fj = S[l] * sum_l1Q - g(K - l)
         if fj > best_val:
             best_val = fj
             best_l, best_r = l, K + 1
 
-        # Update S khi r giảm
+        # r decreases from K to l+1: each step adds label π(r) to the tail (r' += 1)
+        # In-place S update per Algorithm 3 lines 12-14:
+        #   for i = l+r' downto l+1:  S(i) ← p_r*S(i) + (1-p_r)*S(i-1)
         for r in range(K, l, -1):
+            rp = K + 1 - r      # r' = number of labels added to the tail so far
             pr = probs_sorted[r - 1]
-            rp = K + 1 - r
+            # Iterate i descending to avoid overwriting S[i-1] before it is read
+            for i in range(l + rp, l, -1):
+                S[i] = pr * S[i] + (1.0 - pr) * S[i - 1]
 
-            # S_Jac(l, r') = p_r * S_Jac(l+1, r'-1) + (1-p_r) * S_Jac(l, r'-1)
-            new_S = np.zeros(K + 2)
-            for i in range(l + rp, K + 1):
-                # Đây là S(l, r') tại index i = l + r'_1
-                new_S[i] = pr * S[i] + (1 - pr) * (S[i - 1] if i > 0 else 0.0)
-            S = new_S
-
-            fj = S[l + rp] * sum(
-                l1 * Q[l, l1 + 1] for l1 in range(0, l + 1)
-            ) - g(r - l - 1)
+            # S_Jac(l, r') is now stored at S[l + rp]
+            fj = S[l + rp] * sum_l1Q - g(r - l - 1)
             if fj > best_val:
                 best_val = fj
                 best_l, best_r = l, r
@@ -447,23 +567,22 @@ def bop_jaccard(probs: np.ndarray, g: Callable[[int], float]) -> np.ndarray:
 
 
 # ============================================================
-# PHẦN 3: LOSS FUNCTIONS (để evaluate)
+# PART 3: LOSS FUNCTIONS (for evaluation)
 # Section 2.2
 # ============================================================
 
-ABSTAIN = np.nan  # ký hiệu ⊥
+ABSTAIN = np.nan  # symbol ⊥
 
 
 def _get_decided(pred: np.ndarray) -> np.ndarray:
-    """Trả về mask của các nhãn đã dự đoán (không abstain)."""
+    """Return boolean mask of labels that were predicted (not abstained)."""
     return ~np.isnan(pred)
 
 
 def loss_hamming(y_true: np.ndarray, pred: np.ndarray) -> float:
     """
-    Generalized Hamming loss với abstention (Equation 7 + 29).
-    Chỉ tính loss trên phần đã predict, không tính abstain.
-    Abstention sẽ được penalize riêng bởi g(|A|).
+    Generalized Hamming loss with abstention (Equation 7 + 29).
+    Computed only over decided labels; abstentions are penalised separately by g(|A|).
     """
     decided = _get_decided(pred)
     if not np.any(decided):
@@ -474,7 +593,7 @@ def loss_hamming(y_true: np.ndarray, pred: np.ndarray) -> float:
 def loss_subset01(y_true: np.ndarray, pred: np.ndarray) -> float:
     """
     Generalized Subset 0/1 loss (Equation 8 + 29).
-    = 0 nếu tất cả nhãn đã predict đều đúng, 1 nếu có nhãn sai.
+    Returns 0 if all decided labels are correct, 1 if any is wrong.
     """
     decided = _get_decided(pred)
     if not np.any(decided):
@@ -486,11 +605,11 @@ def loss_fmeasure(y_true: np.ndarray, pred: np.ndarray,
                   beta: float = 1.0) -> float:
     """
     Generalized F_beta loss = 1 - F_beta(y_D, ŷ_D) (Equation 9 + 51).
-    Dùng 1-F vì F là accuracy measure (higher = better).
+    Uses 1-F because F is an accuracy measure (higher = better).
     """
     decided = _get_decided(pred)
     if not np.any(decided):
-        return 1.0  # không predict gì = F=0, loss=1
+        return 1.0  # no prediction = F=0, loss=1
 
     yt = y_true[decided]
     yp = pred[decided]
@@ -528,10 +647,9 @@ def loss_jaccard(y_true: np.ndarray, pred: np.ndarray) -> float:
 def loss_rank(y_true: np.ndarray, pred_ranking: np.ndarray) -> float:
     """
     Rank loss (Equation from Section 5).
-    Đếm số cặp nhãn bị xếp hạng sai:
-        λ_i tốt hơn λ_j nhưng y_i=1, y_j=0 (hoặc ngược lại)
+    Counts misordered label pairs: λ_i better than λ_j but y_i=1, y_j=0.
 
-    pred_ranking: mảng rank (0 = highest rank), NaN = abstain
+    pred_ranking: rank array (0 = highest rank), NaN = abstain
     """
     decided = _get_decided(pred_ranking)
     if np.sum(decided) < 2:
@@ -544,7 +662,7 @@ def loss_rank(y_true: np.ndarray, pred_ranking: np.ndarray) -> float:
     n = len(yt)
     for i in range(n):
         for j in range(i + 1, n):
-            # Nếu y_i=1 và y_j=0, rank_i phải < rank_j (i ranked higher)
+            # If y_i=1 and y_j=0, rank_i must be < rank_j (i ranked higher)
             if yt[i] == 1 and yt[j] == 0:
                 if ranks[i] > ranks[j]:  # wrong order
                     loss += 1.0
@@ -556,28 +674,28 @@ def loss_rank(y_true: np.ndarray, pred_ranking: np.ndarray) -> float:
 
 def abstention_size(pred: np.ndarray) -> float:
     """
-    Tỷ lệ nhãn abstain: |A(ŷ)| / K
+    Fraction of abstained labels: |A(ŷ)| / K
     Section 9.1.4 — comparison criterion.
     """
     return float(np.sum(np.isnan(pred))) / len(pred)
 
 
 # ============================================================
-# PHẦN 4: BASELINES
+# PART 4: BASELINES
 # Section 9.1.4
 # ============================================================
 
 def predict_mlc(probs: np.ndarray, threshold: float = 0.5) -> np.ndarray:
     """
-    MLC thông thường — không abstain.
-    Baseline: predict 1 nếu p_k >= threshold, 0 ngược lại.
+    Standard MLC — no abstention.
+    Baseline: predict 1 if p_k >= threshold, 0 otherwise.
     """
     return (probs >= threshold).astype(float)
 
 
 def predict_full_abstain(K: int) -> np.ndarray:
     """
-    Full abstention — abstain hết mọi nhãn.
-    Baseline ABS trong paper.
+    Full abstention — abstain on every label.
+    ABS baseline from the paper.
     """
     return np.full(K, np.nan)

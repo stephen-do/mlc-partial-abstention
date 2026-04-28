@@ -1,10 +1,10 @@
 """
 mlc_plots.py
 ============
-Tái hiện các figures trong Section 9 của bài báo.
+Reproduces figures from Section 9 of the paper.
 
-Figures được tái hiện:
-    - Figure 1: Hamming loss vs cost of abstention (giống Figure 1 paper)
+Figures reproduced:
+    - Figure 1: Hamming loss vs cost of abstention
     - Figure 2: Rank loss vs cost
     - Figure 3: Subset 0/1 loss vs cost
     - Figure 4: F1-measure vs cost
@@ -21,10 +21,10 @@ import os
 
 
 # ============================================================
-# STYLE — giống paper
+# STYLE — matching the paper
 # ============================================================
 
-# Style tương tự paper: ABS=dotted, MLC=solid, PAR=dashed cyan, SEP=solid blue
+# Line styles matching the paper: ABS=dotted, MLC=solid, PAR=dashed, SEP=solid blue
 STYLES = {
     'MLC':  {'color': 'black',       'linestyle': '-',  'linewidth': 1.5, 'label': 'MLC'},
     'ABS':  {'color': 'gray',        'linestyle': '--', 'linewidth': 1.0, 'label': 'ABS'},
@@ -40,10 +40,10 @@ LOSS_LABELS = {
 }
 
 LOSS_SCALE = {
-    # Nhân với 100 để hiển thị %, tương tự paper
+    # Multiply by 100 to display as percentage, matching the paper
     'hamming':  100.0,
     'subset01': 100.0,
-    'fmeasure': 100.0,  # paper hiển thị accuracy (1-loss)*100
+    'fmeasure': 100.0,  # paper shows accuracy (1-loss)*100
     'jaccard':  100.0,
 }
 
@@ -57,11 +57,11 @@ def plot_loss_vs_cost(
     figsize: Optional[Tuple] = None
 ) -> str:
     """
-    Tái hiện Figure 1-5 trong paper.
+    Reproduce Figures 1-5 from the paper.
 
-    Layout: N_datasets cột, mỗi cột có 2 subplots:
-        - Trái: loss vs cost of abstention
-        - Phải: abstention size vs cost of abstention
+    Layout: one column per dataset, each column has two subplots:
+        - Top: loss vs cost of abstention
+        - Bottom: abstention size vs cost of abstention
 
     Paper style: x-axis = cost index 1..10 (cn * scale)
     """
@@ -95,7 +95,7 @@ def plot_loss_vs_cost(
         df = ds_results[classifier_name]
         x = df['cost_pct'].values
 
-        # --- Loss panel ---
+        # Loss panel
         ax_loss.axhline(
             df['loss_mlc'].mean() * scale,
             color=STYLES['MLC']['color'],
@@ -112,7 +112,7 @@ def plot_loss_vs_cost(
         )
 
         if is_accuracy:
-            # F-measure và Jaccard: hiển thị accuracy = (1-loss)*100
+            # F-measure and Jaccard: show accuracy = (1-loss)*100
             ax_loss.plot(x, (1 - df['loss_sep']) * scale, **{k: v for k, v in STYLES['SEP'].items() if k != 'label'}, label='SEP')
             ax_loss.plot(x, (1 - df['loss_par']) * scale, **{k: v for k, v in STYLES['PAR'].items() if k != 'label'}, label='PAR')
             ax_loss.set_ylabel(LOSS_LABELS[loss_name], fontsize=7)
@@ -125,7 +125,7 @@ def plot_loss_vs_cost(
         ax_loss.tick_params(labelsize=6)
         ax_loss.set_xlabel('Cost of abstention', fontsize=6)
 
-        # --- Abstention size panel ---
+        # Abstention size panel
         ax_abs.plot(x, df['abs_size_sep'] * 100, **{k: v for k, v in STYLES['SEP'].items() if k != 'label'}, label='SEP')
         ax_abs.plot(x, df['abs_size_par'] * 100, **{k: v for k, v in STYLES['PAR'].items() if k != 'label'}, label='PAR')
         ax_abs.set_ylabel('Abstention size (%)', fontsize=7)
@@ -133,7 +133,7 @@ def plot_loss_vs_cost(
         ax_abs.tick_params(labelsize=6)
         ax_abs.set_ylim(0, 105)
 
-    # Legend chung
+    # Shared legend
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, loc='lower center', ncol=4,
                fontsize=8, bbox_to_anchor=(0.5, -0.02))
@@ -166,11 +166,11 @@ def plot_meta_analysis(
     output_path: str = 'outputs/'
 ) -> str:
     """
-    Tái hiện Figure 7: Average gain vs MLC performance.
+    Reproduce Figure 7: Average gain vs MLC performance.
 
-    Quan sát quan trọng từ paper:
-    "Khi MLC loss càng cao (classifier yếu), gain từ abstention càng lớn"
-    Điều này xác nhận: reliable classifier biết khi nào nên abstain.
+    Key observation from the paper:
+    "The higher the MLC loss (weaker classifier), the larger the gain from abstention."
+    This confirms that the reliable classifier knows when to abstain.
     """
     from mlc_experiments import compute_average_gain
 
@@ -237,7 +237,7 @@ def plot_summary_table(
     output_path: str = 'outputs/'
 ) -> str:
     """
-    Tạo bảng tóm tắt kết quả cho tất cả datasets và loss functions.
+    Generate a summary table of results across all datasets and loss functions.
     """
     from mlc_experiments import compute_average_gain
 
@@ -269,7 +269,6 @@ def plot_summary_table(
     print(df_summary.to_string(index=False))
     print("="*90)
 
-    # Save CSV
     csv_path = f'{output_path}results_summary.csv'
     df_summary.to_csv(csv_path, index=False)
     print(f"\nSaved summary: {csv_path}")

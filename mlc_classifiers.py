@@ -1,19 +1,18 @@
 """
 mlc_classifiers.py
 ==================
-Implement các MLC classifiers dùng trong experiments.
-Section 9.1 của bài báo.
+MLC classifiers used in the experiments.
+Section 9.1 of the paper.
 
 Classifiers:
     1. BinaryRelevance (BR) — Section 9.1.1
-       Học K binary classifiers riêng biệt, phù hợp với
-       giả định CLI (Conditional Label Independence).
-       Được dùng với: Logistic Regression (BR+LR), SVM (BR+SVM)
+       Learns K independent binary classifiers, consistent with
+       the CLI (Conditional Label Independence) assumption.
+       Used with: Logistic Regression (BR+LR), SVM (BR+SVM)
 
     2. EnsembleClassifierChains (ECC) — Section 9.1.2
-       Ensemble của M classifier chains, mỗi chain học
-       các nhãn theo thứ tự ngẫu nhiên, có thể nắm bắt
-       label dependencies.
+       Ensemble of M classifier chains, each learning labels in a
+       random order, able to capture label dependencies.
 """
 
 import numpy as np
@@ -33,13 +32,13 @@ class BinaryRelevance:
     """
     Binary Relevance learning — Section 9.1.1.
 
-    Ý tưởng: Với mỗi nhãn k, học một binary classifier h_k riêng biệt.
-    Phù hợp với giả định CLI vì treat từng nhãn độc lập.
+    Idea: train one independent binary classifier h_k per label k.
+    Consistent with the CLI assumption since each label is treated independently.
 
-    Output: marginal probabilities p_k = p(Y_k=1 | x) cho mỗi nhãn k.
-    Đây là input chính của tất cả các BOP algorithms.
+    Output: marginal probabilities p_k = p(Y_k=1 | x) for each label k.
+    These are the primary inputs to all BOP algorithms.
 
-    Paper dùng 2 variants:
+    The paper uses two variants:
         - BR+LR: base learner = Logistic Regression
         - BR+SVM: base learner = SVM + Platt scaling
     """
@@ -47,7 +46,7 @@ class BinaryRelevance:
     def __init__(self, base_learner: str = 'lr', random_state: int = 42):
         """
         Args:
-            base_learner: 'lr' (Logistic Regression) hoặc 'svm'
+            base_learner: 'lr' (Logistic Regression) or 'svm'
             random_state: random seed
         """
         self.base_learner = base_learner
@@ -55,9 +54,9 @@ class BinaryRelevance:
         self.classifiers_ = []
 
     def _make_classifier(self):
-        """Tạo một binary classifier."""
+        """Create a single binary classifier."""
         if self.base_learner == 'lr':
-            # Section 9.1.1: Logistic Regression với regularization C=1 (sklearn default)
+            # Section 9.1.1: Logistic Regression with regularisation C=1 (sklearn default)
             return LogisticRegression(
                 C=1.0,
                 max_iter=1000,
@@ -65,8 +64,8 @@ class BinaryRelevance:
                 solver='lbfgs'
             )
         elif self.base_learner == 'svm':
-            # Section 9.1.1: SVM + Platt scaling để convert scores → probabilities
-            # (Lin et al., 2007; Platt, 1999) — Reference [38] và [46] trong bài báo
+            # Section 9.1.1: SVM + Platt scaling to convert scores → probabilities
+            # (Lin et al., 2007; Platt, 1999) — References [38] and [46] in the paper
             svm = SVC(kernel='rbf', probability=False, random_state=self.random_state)
             return CalibratedClassifierCV(svm, method='sigmoid', cv=5)
         else:
@@ -74,7 +73,7 @@ class BinaryRelevance:
 
     def fit(self, X: np.ndarray, Y: np.ndarray) -> 'BinaryRelevance':
         """
-        Học K binary classifiers, một per nhãn.
+        Train K independent binary classifiers, one per label.
 
         Args:
             X: features, shape (N, D)
@@ -88,9 +87,8 @@ class BinaryRelevance:
             clf = self._make_classifier()
             y_k = Y[:, k]
 
-            # Xử lý trường hợp chỉ có 1 class (sẽ lỗi khi fit)
+            # Handle single-class labels (would raise an error during fit)
             if len(np.unique(y_k)) < 2:
-                # Dummy classifier trả về constant probability
                 from sklearn.dummy import DummyClassifier
                 clf = DummyClassifier(strategy='most_frequent')
 
@@ -101,10 +99,10 @@ class BinaryRelevance:
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
-        Trả về marginal probabilities p_k = P(Y_k=1 | x).
+        Return marginal probabilities p_k = P(Y_k=1 | x).
 
         Returns:
-            probs: shape (N, K), mỗi cột là p_k của một nhãn
+            probs: shape (N, K), each column is p_k for one label
         """
         N = X.shape[0]
         probs = np.zeros((N, self.K_))
@@ -112,13 +110,13 @@ class BinaryRelevance:
         for k, clf in enumerate(self.classifiers_):
             if hasattr(clf, 'predict_proba'):
                 p = clf.predict_proba(X)
-                # predict_proba trả về [P(y=0), P(y=1)], lấy cột 1
+                # predict_proba returns [P(y=0), P(y=1)]; take column 1
                 if p.shape[1] == 2:
                     probs[:, k] = p[:, 1]
                 else:
                     probs[:, k] = p[:, 0]
             else:
-                # Fallback: dùng decision function + sigmoid
+                # Fallback: decision function + sigmoid
                 scores = clf.decision_function(X)
                 probs[:, k] = 1.0 / (1.0 + np.exp(-scores))
 
@@ -132,13 +130,13 @@ class BinaryRelevance:
 
 class ClassifierChain:
     """
-    Một Classifier Chain — component của ECC.
+    A single Classifier Chain — component of ECC.
 
-    Ý tưởng: Học nhãn theo một thứ tự (permutation) π.
-    Khi học nhãn k, đưa vào features cả các nhãn đã predict trước đó.
-    Điều này cho phép nắm bắt label dependencies.
+    Idea: learn labels in a fixed permutation π.
+    When learning label k, include all previously predicted labels as features.
+    This allows capturing label dependencies.
 
-    Equation (61) trong paper:
+    Equation (61) in the paper:
         p̄_k = (1/M) * Σ_{m=1}^{M} p_{k,m}
     """
 
@@ -170,7 +168,7 @@ class ClassifierChain:
 
         self.classifiers_ = []
 
-        # Train theo thứ tự π
+        # Train in permutation order π
         X_aug = X.copy()
         for i, k in enumerate(self.order):
             clf = self._make_classifier()
@@ -182,13 +180,13 @@ class ClassifierChain:
             clf.fit(X_aug, y_k)
             self.classifiers_.append(clf)
 
-            # Augment features: thêm nhãn k vào features cho nhãn tiếp theo
+            # Augment features: append label k for the next classifier
             X_aug = np.hstack([X_aug, y_k.reshape(-1, 1)])
 
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Predict marginal probs (dependent marginals)."""
+        """Predict marginal probabilities (dependent marginals)."""
         N = X.shape[0]
         probs = np.zeros((N, self.K_))
         X_aug = X.copy()
@@ -206,7 +204,7 @@ class ClassifierChain:
                 pk = 1.0 / (1.0 + np.exp(-scores))
 
             probs[:, k] = np.clip(pk, 1e-6, 1 - 1e-6)
-            # Augment với predicted probability (soft augmentation)
+            # Soft augmentation: append predicted probability as a feature
             X_aug = np.hstack([X_aug, pk.reshape(-1, 1)])
 
         return probs
@@ -216,21 +214,21 @@ class EnsembleClassifierChains:
     """
     Ensemble of Classifier Chains (ECC) — Section 9.1.2.
 
-    Train M Classifier Chains với M permutations ngẫu nhiên khác nhau.
-    Final probability = mean của M predictions (Equation 61):
+    Train M Classifier Chains with M different random permutations.
+    Final probability = mean of M predictions (Equation 61):
         p̄_k = (1/M) * Σ_{m=1}^{M} p_{k,m}
 
-    Paper dùng M=50 (Section 9.1.2).
-    Có thể nắm bắt label dependence tốt hơn BR.
+    The paper uses M=50 (Section 9.1.2).
+    Captures label dependencies better than BR.
     """
 
     def __init__(self, base_learner: str = 'lr', n_chains: int = 10,
                  random_state: int = 42):
         """
         Args:
-            base_learner: 'lr' hoặc 'svm'
-            n_chains: số lượng chains M (paper dùng 50, ta dùng 10 cho nhanh)
-            random_state: seed gốc
+            base_learner: 'lr' or 'svm'
+            n_chains: number of chains M (paper uses 50; default 10 for speed)
+            random_state: base random seed
         """
         self.base_learner = base_learner
         self.n_chains = n_chains
